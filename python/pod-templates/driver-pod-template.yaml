@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  annotations:
+    ad.datadoghq.com/spark-kubernetes-driver.check_names: '["spark"]'
+    ad.datadoghq.com/spark-kubernetes-driver.init_configs: '[{}]'
+    ad.datadoghq.com/spark-kubernetes-driver.instances: '[{"spark_url":"http://%%host%%:4040","spark_cluster_mode":"spark_kubernetes_mode","cluster_name":"k8s-spark"}]'
+    cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
+spec:
+  #use spot instance
+  tolerations:
+    - key: "node-role.kubernetes.io/spot"
+      operator: "Exists"
+  #set low priority
+  priorityClassName: batch-resumable

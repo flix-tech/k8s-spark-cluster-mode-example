@@ -1,0 +1,67 @@
+# https://taskfile.dev
+
+version: '2'
+env:
+  PROJECT_NAME: k8s-spark-example
+#env: envs to be set on runtime
+  #KUBE_CONTEXT: minikube
+  #DOCKER_REGISTRY: ci-dump-dcr.mfb.io
+  #NAMESPACE: default
+
+tasks:
+
+  run.local:
+    cmds:
+      - task: start.minikube
+      - docker pull gcr.io/spark-operator/spark-py:v2.4.4
+      - source ./local.env && eval $(minikube docker-env) && task docker.build
+      - source ./local.env && task k8s.deploy.rolebinding
+      - source ./local.env && task spark.undeploy
+      - source ./local.env && task spark.deploy
+
+  start.minikube:
+    cmds:
+      - if minikube status | grep Running; then echo "minikube running..."; else echo "starting minikube"; minikube start; fi
+
+  default:
+    cmds:
+      - echo 'executed on {{if ne .KUBE_CONTEXT "minikube"}}remote{{else}}local{{end}}'
+    silent: true
+
+  docker.build:
+    deps: [set.k8s.context]
+    cmds: 
+      - docker build -t $DOCKER_REGISTRY/data/spark-py-example:latest .
+      - '{{if ne .KUBE_CONTEXT "minikube"}}docker push $DOCKER_REGISTRY/data/spark-py-example:latest{{end}}'
+
+  spark.deploy:
+    deps: [set.k8s.context]
+    cmds:
+      - >
+        {{.SPARK_SUBMIT}}
+        --master k8s://{{.K8S_APISERVER}} 
+        --deploy-mode cluster 
+        --name $PROJECT_NAME
+        --conf spark.kubernetes.container.image=$DOCKER_REGISTRY/data/spark-py-example:latest
+        --conf spark.kubernetes.driver.pod.name=$PROJECT_NAME-driver
+        --properties-file python/properties/$ENV.properties
+        local:///opt/example/pi.py
+    vars:
+      SPARK_SUBMIT: '{{if ne .KUBE_CONTEXT "minikube"}}/opt/spark/bin/spark-submit{{else}}./bin/spark-submit{{end}}'
+      K8S_APISERVER:
+        sh: kubectl config view --minify | grep server | cut -f 2- -d ":" | tr -d " "
+  
+  spark.undeploy:
+    deps: [set.k8s.context]
+    cmds:
+      - kubectl delete pod $PROJECT_NAME-driver || echo "pod $PROJECT_NAME-driver does not exist"
+
+  set.k8s.context:
+    cmds:
+      - kubectl config set-context $KUBE_CONTEXT --namespace=$NAMESPACE
+      - kubectl config use-context $KUBE_CONTEXT --namespace=$NAMESPACE
+
+  k8s.deploy.rolebinding:
+    deps: [set.k8s.context]
+    cmds:
+      - kubectl -n $NAMESPACE apply -f k8s/rolebinding.yaml # https://git.flix.tech/data/flux/web-tracking/k8s-spark/raw/master/k8s/rolebinding.yaml
