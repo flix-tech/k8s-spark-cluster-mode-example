@@ -61,13 +61,12 @@ stages:
   stage: deploy
   script:
     - task docker.build
-    - task spark.undeploy
-    - task spark.deploy
+    - task spark.helm.deploy
 
 .undeploy_template: &undeploy_job
   stage: rollback
   script:
-    - task spark.undeploy
+    - task spark.helm.undeploy
 
 # -------------------------------------------------------
 # -- process:deploying a feature branch in the cloud (DEV)

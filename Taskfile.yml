@@ -36,6 +36,7 @@ tasks:
       - docker build -t $DOCKER_REGISTRY/data/spark-py-example:latest .
       - '{{if ne .KUBE_CONTEXT "minikube"}}docker push $DOCKER_REGISTRY/data/spark-py-example:latest{{end}}'
 
+  #private task, this task is only been executed inside spark driver
   spark.deploy:
     cmds:
       - >
@@ -49,11 +50,6 @@ tasks:
         --conf spark.kubernetes.container.image=$CONTAINER_IMAGE
         --properties-file /opt/spark.properties
         local:///opt/example/python/pi.py
-
-  spark.undeploy:
-    deps: [set.k8s.context]
-    cmds:
-      - kubectl delete pod $PROJECT_NAME-driver || echo "pod $PROJECT_NAME-driver does not exist"
 
   spark.helm.deploy:
     deps: [set.k8s.context]
