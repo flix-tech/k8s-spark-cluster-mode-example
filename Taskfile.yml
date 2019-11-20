@@ -11,13 +11,15 @@ env:
 tasks:
 
   run.local:
+    deps: [set.k8s.context]
     cmds:
-      - task: start.minikube
-      - docker pull gcr.io/spark-operator/spark-py:v2.4.4
-      - source ./local.env && eval $(minikube docker-env) && task docker.build
-      - source ./local.env && task k8s.deploy.rolebinding
-      - source ./local.env && task spark.undeploy
-      - source ./local.env && task spark.deploy
+      - >
+        eval $(minikube docker-env);
+        source ./local.env;
+        docker pull gcr.io/spark-operator/spark-py:v2.4.4;
+        task docker.build;
+        task k8s.deploy.rolebinding;
+        task spark.helm.deploy
 
   start.minikube:
     cmds:
@@ -35,26 +37,51 @@ tasks:
       - '{{if ne .KUBE_CONTEXT "minikube"}}docker push $DOCKER_REGISTRY/data/spark-py-example:latest{{end}}'
 
   spark.deploy:
-    deps: [set.k8s.context]
     cmds:
       - >
-        {{.SPARK_SUBMIT}}
-        --master k8s://{{.K8S_APISERVER}} 
-        --deploy-mode cluster 
-        --name $PROJECT_NAME
-        --conf spark.kubernetes.container.image=$DOCKER_REGISTRY/data/spark-py-example:latest
-        --conf spark.kubernetes.driver.pod.name=$PROJECT_NAME-driver
-        --properties-file python/properties/$ENV.properties
-        local:///opt/example/pi.py
-    vars:
-      SPARK_SUBMIT: '{{if ne .KUBE_CONTEXT "minikube"}}/opt/spark/bin/spark-submit{{else}}./bin/spark-submit{{end}}'
-      K8S_APISERVER:
-        sh: kubectl config view --minify | grep server | cut -f 2- -d ":" | tr -d " "
-  
+        /opt/spark/bin/spark-submit
+        --master k8s://https://$KUBERNETES_SERVICE_HOST:$KUBERNETES_SERVICE_PORT
+        --deploy-mode client 
+        --name $DEPLOYMENT_NAME
+        --conf spark.kubernetes.driver.pod.name=$MY_POD_NAME
+        --conf spark.driver.host=$DRIVER_HOSTNAME
+        --conf spark.driver.port=35861
+        --conf spark.kubernetes.container.image=$CONTAINER_IMAGE
+        --properties-file /opt/spark.properties
+        local:///opt/example/python/pi.py
+
   spark.undeploy:
     deps: [set.k8s.context]
     cmds:
       - kubectl delete pod $PROJECT_NAME-driver || echo "pod $PROJECT_NAME-driver does not exist"
+
+  spark.helm.deploy:
+    deps: [set.k8s.context]
+    cmds:
+      - >
+        {{range $service := .SERVICES | trim | splitLines -}}
+          helm upgrade {{$service}} $HELM_CHART_NAME-helm \
+            --namespace $NAMESPACE \
+            --install \
+            --set-string spark_driver.image.repository=$DOCKER_REGISTRY/data/spark-py-example \
+            --set-string spark_driver.image.tag=latest \
+            --force \
+            --values ./helm-values/{{$service}}-helm-values/values-$ENV.yaml;
+        {{end}}
+    vars:
+      SERVICES: |
+        k8s-spark-example
+
+  spark.helm.undeploy:
+    deps: [set.k8s.context]
+    cmds:
+      - >
+        {{range $service := .SERVICES | trim | splitLines -}}
+          helm uninstall --namespace $NAMESPACE {{$service}}
+        {{end}}
+    vars:
+      SERVICES: |
+        k8s-spark-example
 
   set.k8s.context:
     cmds:
